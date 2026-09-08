@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so the PWA installs and launches offline.
    Never touches the OpenMHz API or audio - those must always hit the network. */
-const CACHE = 'cpd-scanner-v4';
+const CACHE = 'cpd-scanner-v6';
 const SHELL = [
   './',
   './index.html',

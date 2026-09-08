@@ -6,7 +6,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Live Chicago Police radio. Keeps playing with your screen off.">
 <meta name="theme-color" content="#0a0f1e">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
+
+<!-- Apply the saved theme before first paint, otherwise Day mode flashes the
+     dark palette on every launch. Kept inline and tiny on purpose. -->
+<script>
+  try {
+    var t = localStorage.getItem('cpd.theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    if (t === 'light') {
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', '#f2f5fa');
+    }
+  } catch (e) { /* storage blocked; System mode is a fine fallback */ }
+</script>
 
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
@@ -102,6 +115,23 @@
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     </button>
     <div class="panel-body" id="optBody" hidden>
+      <div class="opt-stack">
+        <span class="opt-label"><strong>Appearance</strong><small>Day, night, or follow your phone</small></span>
+        <div class="seg" id="themeSeg" role="radiogroup" aria-label="Appearance">
+          <button class="seg-btn" type="button" role="radio" aria-checked="false" data-theme-choice="light">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none"/></svg>
+            Day
+          </button>
+          <button class="seg-btn" type="button" role="radio" aria-checked="false" data-theme-choice="dark">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+            Night
+          </button>
+          <button class="seg-btn" type="button" role="radio" aria-checked="true" data-theme-choice="system">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5.5h17v10h-17z" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M8 19h8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" fill="none"/></svg>
+            Auto
+          </button>
+        </div>
+      </div>
       <label class="opt">
         <span><strong>Start playing when I open the app</strong><small>Begin scanning immediately, no tap needed</small></span>
         <input type="checkbox" id="autoStart" checked>

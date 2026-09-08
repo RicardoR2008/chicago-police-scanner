@@ -96,6 +96,7 @@ const state = {
   onSilence: false,
   externalPause: false,
   recentExpanded: false,
+  theme: 'system',
 };
 
 // Set immediately before we call audio.pause() ourselves, so the 'pause' handler
@@ -349,6 +350,21 @@ function watchdog() {
   lastPos = audio.currentTime;
 }
 
+// fetch() has no default timeout. A connection that hangs instead of failing -
+// routine on mobile when you drift out of coverage - would leave the in-flight
+// guard stuck and silently stop the scanner refilling for good.
+async function fetchJson(url, timeoutMs = 10000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function markSeen(id) {
   state.seen.add(id);
   state.seenOrder.push(id);
@@ -361,9 +377,7 @@ async function poll() {
   lastPollAt = Date.now();
   try {
     const since = state.cursor || (Date.now() - START_LOOKBACK_MS);
-    const res = await fetch(`${API}/${SYSTEM}/calls/newer?time=${since}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
+    const data = await fetchJson(`${API}/${SYSTEM}/calls/newer?time=${since}`);
 
     const calls = (data.calls || []).slice()
       .sort((a, b) => new Date(a.time) - new Date(b.time));
@@ -374,6 +388,7 @@ async function poll() {
       if (ms > state.cursor) state.cursor = ms;
       if (!c._id || state.seen.has(c._id)) continue;
       markSeen(c._id);
+      if (!c.url) continue;   // nothing playable; don't queue a guaranteed 404
       // The enabled set is built from the talkgroups we know about, so a newly
       // added one would be filtered out forever. Let unknown talkgroups through.
       const known = Object.prototype.hasOwnProperty.call(state.talkgroups, c.talkgroupNum);
@@ -409,8 +424,7 @@ async function loadTalkgroups() {
   } catch (_) { /* ignore bad cache */ }
 
   try {
-    const res = await fetch(`${API}/${SYSTEM}/talkgroups`, { cache: 'no-store' });
-    const data = await res.json();
+    const data = await fetchJson(`${API}/${SYSTEM}/talkgroups`);
     const slim = {};
     for (const key of Object.keys(data.talkgroups || {})) {
       const t = data.talkgroups[key];
@@ -489,6 +503,43 @@ function setMediaIdle() {
 
 const clock = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 
+// Intl throws RangeError on an invalid date, which would take the whole render
+// down. One malformed call from the API shouldn't blank the UI.
+function timeLabel(value) {
+  // new Date(null) is epoch 0, a *valid* date - so a null time would render as
+  // 1970 rather than being rejected. Screen those out before parsing.
+  if (value === null || value === undefined || value === '') return '--:--:--';
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? '--:--:--' : clock.format(d);
+}
+
+/* ----------------------------------------------------------------- theme */
+
+// Theme lives under its own key because the inline script in index.html reads it
+// before first paint to avoid flashing the wrong palette.
+const THEME_KEY = 'cpd.theme';
+const THEME_BG = { dark: '#0a0f1e', light: '#f2f5fa' };
+const themeMeta = document.querySelector('meta[name="theme-color"]');
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function applyTheme(choice) {
+  state.theme = (choice === 'light' || choice === 'dark') ? choice : 'system';
+  const root = document.documentElement;
+
+  // System mode means "no opinion" - drop the attribute and let the stylesheet's
+  // prefers-color-scheme query decide.
+  if (state.theme === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', state.theme);
+
+  const dark = state.theme === 'dark' || (state.theme === 'system' && darkQuery.matches);
+  if (themeMeta) themeMeta.setAttribute('content', dark ? THEME_BG.dark : THEME_BG.light);
+
+  for (const btn of document.querySelectorAll('[data-theme-choice]')) {
+    btn.setAttribute('aria-checked', String(btn.dataset.themeChoice === state.theme));
+  }
+  renderMeta();
+}
+
 function setStatus(kind, text) {
   el.status.dataset.state = kind;
   el.statusText.textContent = text || kind;
@@ -533,7 +584,7 @@ function renderNow() {
 
 function renderMeta() {
   const c = state.current;
-  el.nowTime.textContent = c ? clock.format(new Date(c.time)) : ' ';
+  el.nowTime.textContent = c ? timeLabel(c.time) : ' ';
   if (!state.playing) el.queueInfo.textContent = ' ';
   else if (state.queue.length) el.queueInfo.textContent = state.queue.length + ' queued';
   else el.queueInfo.textContent = 'Up to date';
@@ -541,7 +592,8 @@ function renderMeta() {
   const total = Object.keys(state.talkgroups).length;
   const on = state.enabled.size;
   el.tgSummary.textContent = on === total ? `All ${total}` : `${on} of ${total}`;
-  el.optSummary.textContent = state.liveMode ? 'Live mode' : 'Play everything';
+  const themeName = { light: 'Day', dark: 'Night', system: 'Auto' }[state.theme] || 'Auto';
+  el.optSummary.textContent = (state.liveMode ? 'Live' : 'Everything') + ' · ' + themeName;
   el.skipBtn.disabled = !state.playing;
 }
 
@@ -611,7 +663,7 @@ function renderRecent() {
 
     const time = document.createElement('span');
     time.className = 'rc-time';
-    time.textContent = clock.format(new Date(c.time));
+    time.textContent = timeLabel(c.time);
 
     const replay = document.createElement('button');
     replay.className = 'rc-replay';
@@ -703,6 +755,21 @@ document.querySelectorAll('[data-preset]').forEach((btn) => {
   });
 });
 
+for (const btn of document.querySelectorAll('[data-theme-choice]')) {
+  btn.addEventListener('click', () => {
+    applyTheme(btn.dataset.themeChoice);
+    store.set(THEME_KEY, state.theme);
+  });
+}
+
+// In System mode, follow the OS if it flips (Samsung's scheduled night mode does
+// this at sunset) so the address-bar colour and palette stay in step.
+if (typeof darkQuery.addEventListener === 'function') {
+  darkQuery.addEventListener('change', () => {
+    if (state.theme === 'system') applyTheme('system');
+  });
+}
+
 el.liveMode.addEventListener('change', () => {
   state.liveMode = el.liveMode.checked; saveSettings(); renderMeta();
 });
@@ -764,6 +831,7 @@ function maybeShowIosInstallHint() {
 /* ------------------------------------------------------------------ boot */
 
 function boot() {
+  applyTheme(store.get(THEME_KEY) || 'system');
   loadSettings();
   el.liveMode.checked = state.liveMode;
   el.skipShort.checked = state.skipShort;
@@ -781,6 +849,19 @@ function boot() {
   maybeShowIosInstallHint();
 
   if ('serviceWorker' in navigator) {
+    // The shell is served cache-first, so without this a fix only reaches the
+    // user on some *later* launch - they sit on stale code with no way to know.
+    // The worker calls skipWaiting/claim, so take control as a cue to reload.
+    const hadController = !!navigator.serviceWorker.controller;
+    const bootAt = Date.now();
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;          // first install: nothing to replace
+      // Never cut off a session already in progress; at launch it's free.
+      if (Date.now() - bootAt > 10000 && audio && !audio.paused) return;
+      reloading = true;
+      location.reload();
+    });
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     });

@@ -16,7 +16,8 @@ so GitHub Pages can host it for free.
 - Keeps going with the screen off, with lock-screen play/pause/skip controls
 - Filter by channel: 13 dispatch zones (by district) and 7 citywide channels
 - **Live mode** skips the backlog so you stay close to real time
-- Recent-call list with one-tap replay
+- Recent-call list with one-tap replay, capped so the page never grows unbounded
+- **Day / Night / Auto** appearance, Auto following your phone
 - Remembers your channels and settings
 
 ## Install it on your phone
