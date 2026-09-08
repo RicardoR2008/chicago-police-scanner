@@ -190,11 +190,22 @@ input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; background: v
 
 /* ---------- recent ---------- */
 .recent { margin-top: 20px; }
+.recent-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 8px;
+}
 .recent-head {
   font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
-  text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+  text-transform: uppercase; color: var(--muted);
 }
 .recent-list { list-style: none; margin: 0; padding: 0; }
+/* Expanded, the history is bounded and scrolls inside itself so the page
+   length stays predictable no matter how long the scanner has been running. */
+.recent-list.is-expanded {
+  max-height: 55vh; overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
 .recent-list li {
   display: flex; align-items: center; gap: 12px;
   padding: 11px 14px; margin-bottom: 6px;
@@ -231,6 +242,8 @@ input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; background: v
   font-size: 13px;
 }
 .install span { flex: 1; }
+/* The bar is fixed, so keep it from sitting on top of the last few calls. */
+body.has-install main { padding-bottom: 84px; }
 
 @media (min-width: 620px) {
   .now-tg { font-size: 28px; }

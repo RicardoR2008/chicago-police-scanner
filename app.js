@@ -18,7 +18,8 @@ const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
 const POLL_MS = 5000;
 const START_LOOKBACK_MS = 20000;   // begin near-live rather than replaying history
-const RECENT_MAX = 40;
+const RECENT_MAX = 40;      // how much history we keep in memory
+const RECENT_VISIBLE = 6;   // how much of it we render before "Show more"
 const SEEN_MAX = 600;
 
 // Baked in so the UI renders instantly and still works offline; refreshed from
@@ -59,7 +60,7 @@ const el = {
   tgToggle: $('tgToggle'), tgBody: $('tgBody'), tgChips: $('tgChips'), tgSummary: $('tgSummary'),
   optToggle: $('optToggle'), optBody: $('optBody'), optSummary: $('optSummary'),
   liveMode: $('liveMode'), skipShort: $('skipShort'), autoStart: $('autoStart'),
-  recentList: $('recentList'),
+  recentList: $('recentList'), recentToggle: $('recentToggle'),
   installBar: $('installBar'), installBtn: $('installBtn'),
   installClose: $('installClose'), installText: $('installText'),
 };
@@ -81,6 +82,7 @@ const state = {
   netFail: 0,
   onSilence: false,
   externalPause: false,
+  recentExpanded: false,
 };
 
 // Set immediately before we call audio.pause() ourselves, so the 'pause' handler
@@ -531,15 +533,24 @@ function renderChips() {
 }
 
 function renderRecent() {
+  const keepScroll = el.recentList.scrollTop;
   el.recentList.textContent = '';
+
   if (!state.recent.length) {
     const li = document.createElement('li');
     li.className = 'empty';
     li.textContent = 'Nothing yet — press play.';
     el.recentList.appendChild(li);
+    el.recentToggle.hidden = true;
+    el.recentList.classList.remove('is-expanded');
     return;
   }
-  for (const c of state.recent) {
+
+  // Render only a handful by default. A scanner running for an hour would
+  // otherwise turn this into thousands of pixels of scroll.
+  const items = state.recentExpanded ? state.recent : state.recent.slice(0, RECENT_VISIBLE);
+
+  for (const c of items) {
     const tg = tgInfo(c.talkgroupNum);
     const isCurrent = !!(state.current && state.current._id === c._id);
     const li = document.createElement('li');
@@ -580,6 +591,16 @@ function renderRecent() {
     li.append(main, time, replay);
     el.recentList.appendChild(li);
   }
+
+  const more = state.recent.length - items.length;
+  el.recentToggle.hidden = state.recent.length <= RECENT_VISIBLE;
+  el.recentToggle.textContent = state.recentExpanded ? 'Show less' : `Show ${more} more`;
+  el.recentToggle.setAttribute('aria-expanded', String(state.recentExpanded));
+  el.recentList.classList.toggle('is-expanded', state.recentExpanded);
+
+  // Calls land every few seconds and rebuild this list, so hold the user's
+  // place instead of snapping them back to the top while they read.
+  if (state.recentExpanded) el.recentList.scrollTop = keepScroll;
 }
 
 /* -------------------------------------------------------------- settings */
@@ -611,6 +632,11 @@ function loadSettings() {
 
 el.playBtn.addEventListener('click', toggle);
 el.skipBtn.addEventListener('click', () => { if (state.playing) next(); });
+
+el.recentToggle.addEventListener('click', () => {
+  state.recentExpanded = !state.recentExpanded;
+  renderRecent();
+});
 
 el.volume.addEventListener('input', () => {
   state.volume = Number(el.volume.value) / 100;
@@ -663,11 +689,17 @@ window.addEventListener('online', () => { if (state.playing) poll(); });
 /* ------------------------------------------------------------- install ui */
 
 let deferredPrompt = null;
+
+function setInstallBar(show) {
+  el.installBar.hidden = !show;
+  document.body.classList.toggle('has-install', show);
+}
+
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
   if (localStorage.getItem('cpd.installDismissed')) return;
-  el.installBar.hidden = false;
+  setInstallBar(true);
 });
 
 el.installBtn.addEventListener('click', async () => {
@@ -675,13 +707,16 @@ el.installBtn.addEventListener('click', async () => {
   deferredPrompt.prompt();
   await deferredPrompt.userChoice;
   deferredPrompt = null;
-  el.installBar.hidden = true;
+  setInstallBar(false);
 });
 
 el.installClose.addEventListener('click', () => {
-  el.installBar.hidden = true;
+  setInstallBar(false);
   try { localStorage.setItem('cpd.installDismissed', '1'); } catch (_) {}
 });
+
+// Once it is running as an installed app the banner is meaningless.
+window.addEventListener('appinstalled', () => setInstallBar(false));
 
 function maybeShowIosInstallHint() {
   const standalone = window.navigator.standalone === true ||
@@ -689,7 +724,7 @@ function maybeShowIosInstallHint() {
   if (!IS_IOS || standalone || localStorage.getItem('cpd.installDismissed')) return;
   el.installText.textContent = 'For background audio: tap Share, then Add to Home Screen.';
   el.installBtn.hidden = true;
-  el.installBar.hidden = false;
+  setInstallBar(true);
 }
 
 /* ------------------------------------------------------------------ boot */
