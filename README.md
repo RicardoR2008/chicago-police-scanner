@@ -98,6 +98,12 @@ New calls are pulled from `GET /chi_cpd/calls/newer?time=<epoch_ms>` every 5 sec
 **and** on every `ended` event. That second trigger is the important one: background
 timers get throttled, but media events keep firing, so playback itself drives the refill.
 
+Both triggers go through a single throttle with a 3-second floor. Without it, busy
+traffic fired the `ended` refill roughly once a second — measured at 28 requests/minute
+against an intended 12 — which is what starts Cloudflare challenging the client. Requests
+inside the floor are coalesced into one deferred poll rather than dropped, so a call
+ending during a throttled window still refills the queue, just a moment later.
+
 ### Why not the websocket?
 
 OpenMHz's backend ([openmhz/trunk-server](https://github.com/openmhz/trunk-server))

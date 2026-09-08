@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; }
 
+/* Several components below set an explicit display, which outranks the browser's
+   built-in [hidden] { display: none } and leaves them stuck on screen. Anything
+   toggled via the hidden attribute needs this to actually hide. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {

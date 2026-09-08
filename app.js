@@ -17,7 +17,12 @@
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
 const POLL_MS = 5000;
+// Calls also trigger a refill when they end, and during busy traffic that alone
+// fired every ~1s. Floor the gap so the two triggers together stay polite -
+// OpenMHz sits behind Cloudflare and will start challenging a chatty client.
+const POLL_MIN_GAP_MS = 3000;
 const START_LOOKBACK_MS = 20000;   // begin near-live rather than replaying history
+const STALE_RESUME_MS = 60000;     // past this, a resume rejoins live instead of catching up
 const RECENT_MAX = 40;      // how much history we keep in memory
 const RECENT_VISIBLE = 6;   // how much of it we render before "Show more"
 const SEEN_MAX = 600;
@@ -49,6 +54,14 @@ const TG_FALLBACK = {
 
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// Reading localStorage *throws* when a browser is set to block site data, not
+// just returns null. An unguarded read in the boot path would take the service
+// worker registration and autostart down with it, so funnel every access here.
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch (_) { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch (_) { /* no storage */ } },
+};
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -159,7 +172,7 @@ function next() {
   trimQueue();
   const call = state.queue.shift();
   if (call) playCall(call);
-  else { playSilence(); render(); }
+  else { playSilence().catch(() => {}); render(); }
 }
 
 // Android hands audio focus to phone calls, other media apps and navigation
@@ -192,7 +205,7 @@ function onEnded() {
   if (state.onSilence) return;          // looping silence should never end
   state.current = null;
   next();
-  poll();   // event-driven refill: keeps working when background timers throttle
+  requestPoll();   // event-driven refill: keeps working when background timers throttle
 }
 
 let errorGuard = 0;
@@ -233,7 +246,13 @@ function start(opts) {
   ensureAudio();
   state.playing = true;
   state.externalPause = false;   // an explicit start overrides a focus-loss pause
-  if (!state.cursor) state.cursor = Date.now() - START_LOOKBACK_MS;
+  // Pressing play after a long pause should rejoin live traffic. Without this
+  // the cursor is still minutes old, so the next poll returns a huge backlog and
+  // you hear stale calls before catching up.
+  if (!state.cursor || (state.liveMode && Date.now() - state.cursor > STALE_RESUME_MS)) {
+    state.cursor = Date.now() - START_LOOKBACK_MS;
+    state.queue.length = 0;
+  }
 
   // play() must be called synchronously inside the tap for iOS to unlock the
   // element. Everything else can happen afterwards.
@@ -252,7 +271,7 @@ function start(opts) {
   setupMediaSession();
   setPlayButton('loading');
   setStatus('wait', 'Connecting');
-  poll();
+  requestPoll();
   startTimers();
   render();
 }
@@ -286,15 +305,28 @@ let pollTimer = null, watchTimer = null;
 let polling = false;
 let lastPos = -1, stallTicks = 0;
 
+let lastPollAt = 0, pendingPoll = null;
+
+// Every refill goes through here. If a poll happened too recently the request is
+// coalesced into a single deferred one rather than dropped, so an 'ended' event
+// during a throttled window still refills the queue - just a moment later.
+function requestPoll() {
+  const wait = POLL_MIN_GAP_MS - (Date.now() - lastPollAt);
+  if (wait <= 0) { poll(); return; }
+  if (pendingPoll) return;
+  pendingPoll = setTimeout(() => { pendingPoll = null; poll(); }, wait);
+}
+
 function startTimers() {
   stopTimers();
-  pollTimer = setInterval(poll, POLL_MS);
+  pollTimer = setInterval(requestPoll, POLL_MS);
   watchTimer = setInterval(watchdog, 4000);
 }
 
 function stopTimers() {
   clearInterval(pollTimer); pollTimer = null;
   clearInterval(watchTimer); watchTimer = null;
+  clearTimeout(pendingPoll); pendingPoll = null;
 }
 
 // Recovers from the two ways background playback dies: the OS pausing us, and a
@@ -326,6 +358,7 @@ function markSeen(id) {
 async function poll() {
   if (polling) return;
   polling = true;
+  lastPollAt = Date.now();
   try {
     const since = state.cursor || (Date.now() - START_LOOKBACK_MS);
     const res = await fetch(`${API}/${SYSTEM}/calls/newer?time=${since}`, { cache: 'no-store' });
@@ -341,7 +374,10 @@ async function poll() {
       if (ms > state.cursor) state.cursor = ms;
       if (!c._id || state.seen.has(c._id)) continue;
       markSeen(c._id);
-      if (!state.enabled.has(c.talkgroupNum)) continue;
+      // The enabled set is built from the talkgroups we know about, so a newly
+      // added one would be filtered out forever. Let unknown talkgroups through.
+      const known = Object.prototype.hasOwnProperty.call(state.talkgroups, c.talkgroupNum);
+      if (known && !state.enabled.has(c.talkgroupNum)) continue;
       if (state.skipShort && (c.len || 0) < 2) continue;
       state.queue.push(c);
       added++;
@@ -368,7 +404,7 @@ async function poll() {
 async function loadTalkgroups() {
   applyTalkgroups(TG_FALLBACK);
   try {
-    const cached = JSON.parse(localStorage.getItem('cpd.tg') || 'null');
+    const cached = JSON.parse(store.get('cpd.tg') || 'null');
     if (cached && Object.keys(cached).length) applyTalkgroups(cached);
   } catch (_) { /* ignore bad cache */ }
 
@@ -382,7 +418,7 @@ async function loadTalkgroups() {
     }
     if (Object.keys(slim).length) {
       applyTalkgroups(slim);
-      localStorage.setItem('cpd.tg', JSON.stringify(slim));
+      store.set('cpd.tg', JSON.stringify(slim));
     }
   } catch (_) { /* keep whatever we already have */ }
   renderChips();
@@ -468,7 +504,7 @@ function addRecent(call) {
   state.recent = state.recent.filter((c) => c._id !== call._id);
   state.recent.unshift(call);
   if (state.recent.length > RECENT_MAX) state.recent.length = RECENT_MAX;
-  renderRecent();
+  // No render here: the only caller is playCall(), which renders straight after.
 }
 
 function render() { renderNow(); renderMeta(); renderRecent(); }
@@ -606,20 +642,18 @@ function renderRecent() {
 /* -------------------------------------------------------------- settings */
 
 function saveSettings() {
-  try {
-    localStorage.setItem('cpd.settings', JSON.stringify({
-      enabled: [...state.enabled],
-      liveMode: state.liveMode,
-      skipShort: state.skipShort,
-      autoStart: state.autoStart,
-      volume: state.volume,
-    }));
-  } catch (_) { /* private mode */ }
+  store.set('cpd.settings', JSON.stringify({
+    enabled: [...state.enabled],
+    liveMode: state.liveMode,
+    skipShort: state.skipShort,
+    autoStart: state.autoStart,
+    volume: state.volume,
+  }));
 }
 
 function loadSettings() {
   let s = null;
-  try { s = JSON.parse(localStorage.getItem('cpd.settings') || 'null'); } catch (_) {}
+  try { s = JSON.parse(store.get('cpd.settings') || 'null'); } catch (_) {}
   if (!s) return;
   if (Array.isArray(s.enabled) && s.enabled.length) state.enabled = new Set(s.enabled.map(Number));
   if (typeof s.liveMode === 'boolean') state.liveMode = s.liveMode;
@@ -681,10 +715,10 @@ el.autoStart.addEventListener('change', () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !state.playing) return;
-  poll();
+  requestPoll();
   if (audio && audio.paused && !state.externalPause) audio.play().catch(() => {});
 });
-window.addEventListener('online', () => { if (state.playing) poll(); });
+window.addEventListener('online', () => { if (state.playing) requestPoll(); });
 
 /* ------------------------------------------------------------- install ui */
 
@@ -698,7 +732,7 @@ function setInstallBar(show) {
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  if (localStorage.getItem('cpd.installDismissed')) return;
+  if (store.get('cpd.installDismissed')) return;
   setInstallBar(true);
 });
 
@@ -712,7 +746,7 @@ el.installBtn.addEventListener('click', async () => {
 
 el.installClose.addEventListener('click', () => {
   setInstallBar(false);
-  try { localStorage.setItem('cpd.installDismissed', '1'); } catch (_) {}
+  store.set('cpd.installDismissed', '1');
 });
 
 // Once it is running as an installed app the banner is meaningless.
@@ -721,7 +755,7 @@ window.addEventListener('appinstalled', () => setInstallBar(false));
 function maybeShowIosInstallHint() {
   const standalone = window.navigator.standalone === true ||
     window.matchMedia('(display-mode: standalone)').matches;
-  if (!IS_IOS || standalone || localStorage.getItem('cpd.installDismissed')) return;
+  if (!IS_IOS || standalone || store.get('cpd.installDismissed')) return;
   el.installText.textContent = 'For background audio: tap Share, then Add to Home Screen.';
   el.installBtn.hidden = true;
   setInstallBar(true);
