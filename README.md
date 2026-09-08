@@ -152,6 +152,22 @@ node tools/check-version.js
 
 Run that before committing; it fails if the two drift apart.
 
+### The status bar on an installed app
+
+Once installed, Android takes the status bar colour from `theme_color` in
+`manifest.webmanifest`, captured at install time — the runtime
+`<meta name="theme-color">` that Day/Night switching updates does **not** reliably
+override it in standalone mode. That's why an installed app showed a black status bar
+above the light Day theme.
+
+`theme_color` is a single static value with no media-query equivalent, so it cannot
+follow the in-app theme. It is set to the Day colour (`#dbe4f2`), which means Night mode
+may show a light status bar on an installed app where the meta override is ignored. That
+is a deliberate trade, not an oversight.
+
+Changing it requires **uninstalling and reinstalling** the app — Chrome re-reads the
+manifest on its own schedule, so a plain reload will not pick it up.
+
 ### If the app gets stuck on an old build
 
 Open **`/reset.html`**. It unregisters every service worker, deletes every cache, and
