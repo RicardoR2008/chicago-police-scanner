@@ -176,6 +176,12 @@ main { padding: 0 16px; max-width: 620px; margin: 0 auto; }
 }
 .controls .play-btn { grid-column: 2; }
 .controls .ghost-btn { grid-column: 3; justify-self: start; margin-left: 18px; }
+/* Emergency stop sits opposite Skip, which also keeps the play button centred. */
+.controls .ghost-btn.danger {
+  grid-column: 1; justify-self: end; margin-left: 0; margin-right: 18px;
+  color: var(--red);
+}
+.controls .ghost-btn.danger:active { opacity: 0.6; }
 .play-btn {
   width: 84px; height: 84px; border-radius: 50%; flex: none;
   border: none; cursor: pointer; color: var(--accent-text);

@@ -16,7 +16,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v13';
+const APP_VERSION = 'v14';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -86,7 +86,7 @@ const el = {
   tgToggle: $('tgToggle'), tgBody: $('tgBody'), tgChips: $('tgChips'), tgSummary: $('tgSummary'),
   optToggle: $('optToggle'), optBody: $('optBody'), optSummary: $('optSummary'),
   liveMode: $('liveMode'), skipShort: $('skipShort'), autoStart: $('autoStart'),
-  recentList: $('recentList'), recentToggle: $('recentToggle'),
+  recentList: $('recentList'), recentToggle: $('recentToggle'), stopBtn: $('stopBtn'),
   installBar: $('installBar'), installBtn: $('installBtn'),
   installClose: $('installClose'), installText: $('installText'),
 };
@@ -163,17 +163,35 @@ function ensureAudio() {
   audio.addEventListener('waiting', () => setPlayButton('loading'));
 }
 
+// Going idle must NOT touch audio.src. Assigning src fires 'emptied', and on
+// Android that tears the media session down - which is why the notification
+// vanished every time the radio went quiet, while playing fine during a call.
+//
+// So instead of switching to a silence file, we keep whatever clip is already
+// loaded and loop it at zero volume. The element never empties, the session
+// never dies, and the lock screen keeps showing "Scanning...".
 function playSilence() {
   if (!audio) return Promise.resolve();
 
-  // Re-assigning src fires 'emptied', which can tear the media session down and
-  // take the notification with it. If the keep-alive is already running, leave
-  // the element alone.
-  const alreadyRunning = state.onSilence && audio.src === silenceUrl && !audio.paused;
   state.onSilence = true;
   state.current = null;
-  if (alreadyRunning) { setMediaIdle(); return Promise.resolve(); }
 
+  // Already idling - do not disturb the element at all.
+  if (audio.loop && audio.volume === 0 && !audio.paused) {
+    setMediaIdle();
+    return Promise.resolve();
+  }
+
+  // Preferred path: a real clip is loaded, so loop it silently. No src change.
+  if (audio.readyState >= 2 && audio.src && audio.src !== silenceUrl) {
+    audio.volume = 0;
+    audio.loop = true;
+    setMediaIdle();
+    return audio.paused ? audio.play() : Promise.resolve();
+  }
+
+  // Cold start only: nothing has loaded yet, so there is nothing to loop.
+  audio.volume = 0;
   audio.loop = true;
   audio.src = silenceUrl;
   setMediaIdle();
@@ -185,6 +203,7 @@ function playCall(call) {
   state.onSilence = false;
   state.current = call;
   audio.loop = false;
+  audio.volume = state.volume;   // undo the zero-volume idle loop
   audio.src = call.url;
   audio.play().catch(() => {});
   addRecent(call);
@@ -351,6 +370,50 @@ function stop() {
 }
 
 function toggle() { state.playing ? stop() : start(); }
+
+// Emergency stop. A page can only close a window it opened itself, so closing is
+// best-effort - but silencing is not. Everything below runs first and
+// unconditionally: the element is torn down and the media session dropped, so
+// nothing can keep playing or be restarted from the lock screen, whether or not
+// the window actually closes.
+function emergencyStop() {
+  state.playing = false;
+  state.queue.length = 0;
+  state.current = null;
+  state.onSilence = false;
+  state.externalPause = false;
+  state.resumeStrikes = 0;
+  clearTimeout(resumeTimer); resumeTimer = null;
+  stopTimers();
+
+  if (audio) {
+    selfPause = true;
+    audio.pause();
+    audio.loop = false;
+    // Detach the source so no timer, event or handler can resume it.
+    audio.removeAttribute('src');
+    try { audio.load(); } catch (_) { /* already empty */ }
+  }
+
+  // Dropping metadata and the action handlers is what removes the Android
+  // notification; leaving them would keep a dead card with live controls.
+  if ('mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.playbackState = 'none';
+      navigator.mediaSession.metadata = null;
+      for (const action of ['play', 'pause', 'stop', 'nexttrack', 'seekforward']) {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch (_) {}
+      }
+    } catch (_) { /* not supported */ }
+  }
+
+  setPlayButton('paused');
+  setStatus('idle', 'Stopped');
+  render();
+
+  // Only now, once it is provably silent, try to close.
+  setTimeout(() => { try { window.close(); } catch (_) {} }, 150);
+}
 
 function trimQueue() {
   if (state.liveMode) {
@@ -826,6 +889,7 @@ function loadSettings() {
 
 el.playBtn.addEventListener('click', toggle);
 el.skipBtn.addEventListener('click', () => { if (state.playing) next(); });
+el.stopBtn.addEventListener('click', emergencyStop);
 
 el.recentToggle.addEventListener('click', () => {
   state.recentExpanded = !state.recentExpanded;
