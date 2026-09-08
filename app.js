@@ -518,9 +518,25 @@ function timeLabel(value) {
 // Theme lives under its own key because the inline script in index.html reads it
 // before first paint to avoid flashing the wrong palette.
 const THEME_KEY = 'cpd.theme';
-const THEME_BG = { dark: '#0a0f1e', light: '#f2f5fa' };
-const themeMeta = document.querySelector('meta[name="theme-color"]');
+// The Day value is a shade darker than the page background on purpose: matching
+// it exactly merged the status bar into the app, so the notification icons had
+// no defined band to sit on and read as missing.
+const THEME_BG = { dark: '#0a0f1e', light: '#dbe4f2' };
+const themeMetas = document.querySelectorAll('meta[name="theme-color"]');
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+// System leaves the media-scoped pair intact so the browser tracks the OS on its
+// own; an explicit choice pins both entries to the same colour, which works
+// regardless of which media query happens to match.
+function setThemeColor(choice) {
+  for (const m of themeMetas) {
+    const isDarkSlot = (m.getAttribute('media') || '').includes('dark');
+    const value = choice === 'system'
+      ? (isDarkSlot ? THEME_BG.dark : THEME_BG.light)
+      : (choice === 'dark' ? THEME_BG.dark : THEME_BG.light);
+    m.setAttribute('content', value);
+  }
+}
 
 function applyTheme(choice) {
   state.theme = (choice === 'light' || choice === 'dark') ? choice : 'system';
@@ -531,8 +547,7 @@ function applyTheme(choice) {
   if (state.theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', state.theme);
 
-  const dark = state.theme === 'dark' || (state.theme === 'system' && darkQuery.matches);
-  if (themeMeta) themeMeta.setAttribute('content', dark ? THEME_BG.dark : THEME_BG.light);
+  setThemeColor(state.theme);
 
   for (const btn of document.querySelectorAll('[data-theme-choice]')) {
     btn.setAttribute('aria-checked', String(btn.dataset.themeChoice === state.theme));
@@ -680,9 +695,10 @@ function renderRecent() {
     el.recentList.appendChild(li);
   }
 
-  const more = state.recent.length - items.length;
+  // A live count here climbed with every call, so the button's text and width
+  // kept shifting under the user. Static label instead.
   el.recentToggle.hidden = state.recent.length <= RECENT_VISIBLE;
-  el.recentToggle.textContent = state.recentExpanded ? 'Show less' : `Show ${more} more`;
+  el.recentToggle.textContent = state.recentExpanded ? 'Show less' : 'Show more';
   el.recentToggle.setAttribute('aria-expanded', String(state.recentExpanded));
   el.recentList.classList.toggle('is-expanded', state.recentExpanded);
 

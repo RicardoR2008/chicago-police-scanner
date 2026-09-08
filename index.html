@@ -5,7 +5,14 @@
 <title>Chicago Police Scanner</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Live Chicago Police radio. Keeps playing with your screen off.">
-<meta name="theme-color" content="#0a0f1e">
+<!-- A media-scoped pair, so System mode gets the right status bar straight from
+     the browser with no dark flash before JS runs. An explicit Day/Night choice
+     overrides by setting BOTH to the same value, which avoids depending on
+     meta ordering. The Day value is deliberately a shade darker than the page
+     background: matching it exactly merged the status bar into the app and made
+     the notification icons disappear. -->
+<meta name="theme-color" content="#dbe4f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a0f1e" media="(prefers-color-scheme: dark)">
 <meta name="color-scheme" content="light dark">
 
 <!-- Apply the saved theme before first paint, otherwise Day mode flashes the
@@ -13,10 +20,11 @@
 <script>
   try {
     var t = localStorage.getItem('cpd.theme');
-    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
-    if (t === 'light') {
-      var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.setAttribute('content', '#f2f5fa');
+    if (t === 'light' || t === 'dark') {
+      document.documentElement.setAttribute('data-theme', t);
+      var c = t === 'dark' ? '#0a0f1e' : '#dbe4f2';
+      var ms = document.querySelectorAll('meta[name="theme-color"]');
+      for (var i = 0; i < ms.length; i++) ms[i].setAttribute('content', c);
     }
   } catch (e) { /* storage blocked; System mode is a fine fallback */ }
 </script>
