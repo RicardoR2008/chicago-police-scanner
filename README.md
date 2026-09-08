@@ -40,6 +40,13 @@ because it runs as its own app instead of a browser tab.
 Once it's playing, lock your phone or switch apps and audio continues. Your lock screen
 gets standard media controls (play, pause, skip to next call).
 
+**It yields the speaker.** When a phone call, another media app, or a navigation prompt
+takes audio focus, Android pauses the scanner and it *stays* paused — it won't fight you
+for the speaker. The status reads "Paused by phone"; press play on the lock screen to take
+it back. This is deliberately different from the OS *suspending* a backgrounded page,
+which stalls playback without a `pause` event — the watchdog does recover from that, and
+that's what keeps audio alive with the screen off.
+
 Two honest caveats:
 
 - **iOS needs one tap to start.** Safari blocks audio until you interact with the page, so
@@ -50,6 +57,19 @@ Two honest caveats:
 
 If audio ever stops, opening the app resumes it — there's a watchdog that restarts
 playback and re-syncs whenever the app becomes visible again.
+
+### Samsung / One UI
+
+Samsung's battery management is the most common reason background audio dies overnight on
+a Galaxy, and it will happily sleep an installed PWA. After installing, set:
+
+- **Settings → Apps → Chicago Scanner → Battery → Unrestricted**
+- **Settings → Battery → Background usage limits** — make sure the app is *not* listed
+  under "Sleeping apps" or "Deep sleeping apps"
+- Turn off **Put unused apps to sleep** in that same screen, or the app gets slept after a
+  few days of not opening it
+
+Both Chrome and Samsung Internet support install and lock-screen controls.
 
 ## How it works
 

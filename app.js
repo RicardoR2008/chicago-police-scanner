@@ -80,7 +80,12 @@ const state = {
   volume: 1,
   netFail: 0,
   onSilence: false,
+  externalPause: false,
 };
+
+// Set immediately before we call audio.pause() ourselves, so the 'pause' handler
+// can tell our own pause apart from Android taking audio focus away.
+let selfPause = false;
 
 /* ------------------------------------------------------------------ audio */
 
@@ -119,6 +124,7 @@ function ensureAudio() {
   audio.addEventListener('error', onAudioError);
   audio.addEventListener('timeupdate', onTimeUpdate);
   audio.addEventListener('playing', onPlaying);
+  audio.addEventListener('pause', onPause);
   audio.addEventListener('waiting', () => setPlayButton('loading'));
 }
 
@@ -154,7 +160,25 @@ function next() {
   else { playSilence(); render(); }
 }
 
+// Android hands audio focus to phone calls, other media apps and navigation
+// prompts by pausing our element. Chasing that with play() would yank the
+// speaker back and talk over them, so treat an unexpected pause as a stop and
+// let the user resume from the lock screen when they are ready.
+//
+// This is deliberately distinct from the OS *suspending* a backgrounded page,
+// which stalls currentTime without firing 'pause' - the watchdog still recovers
+// from that, which is what keeps playback alive with the screen off.
+function onPause() {
+  if (selfPause) { selfPause = false; return; }
+  if (!state.playing) return;
+  state.externalPause = true;
+  setPlayButton('paused');
+  setStatus('wait', 'Paused by phone');
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+}
+
 function onPlaying() {
+  state.externalPause = false;
   setPlayButton('playing');
   setStatus('live', 'Live');
   // The unlock is now confirmed on this element, so it is safe to swap in a real
@@ -183,6 +207,21 @@ function onTimeUpdate() {
     return;
   }
   el.progressFill.style.width = Math.min(100, (audio.currentTime / audio.duration) * 100) + '%';
+  updatePositionState();
+}
+
+// Gives the Android lock screen a real progress bar for the current call.
+function updatePositionState() {
+  const ms = navigator.mediaSession;
+  if (!ms || typeof ms.setPositionState !== 'function') return;
+  if (!audio || state.onSilence || !isFinite(audio.duration) || audio.duration <= 0) return;
+  try {
+    ms.setPositionState({
+      duration: audio.duration,
+      playbackRate: audio.playbackRate || 1,
+      position: Math.min(Math.max(audio.currentTime, 0), audio.duration),
+    });
+  } catch (_) { /* position state is best-effort */ }
 }
 
 /* --------------------------------------------------------------- transport */
@@ -191,6 +230,7 @@ function start(opts) {
   const auto = !!(opts && opts.auto);
   ensureAudio();
   state.playing = true;
+  state.externalPause = false;   // an explicit start overrides a focus-loss pause
   if (!state.cursor) state.cursor = Date.now() - START_LOOKBACK_MS;
 
   // play() must be called synchronously inside the tap for iOS to unlock the
@@ -217,8 +257,9 @@ function start(opts) {
 
 function stop() {
   state.playing = false;
-  if (audio) { audio.pause(); }
+  if (audio) { selfPause = true; audio.pause(); }
   state.onSilence = false;
+  state.externalPause = false;
   stopTimers();
   setPlayButton('paused');
   setStatus('idle', 'Paused');
@@ -259,7 +300,11 @@ function stopTimers() {
 function watchdog() {
   if (!state.playing || !audio) return;
 
-  if (audio.paused) { audio.play().catch(() => {}); return; }
+  // Don't resume while something else legitimately holds audio focus.
+  if (audio.paused) {
+    if (!state.externalPause) audio.play().catch(() => {});
+    return;
+  }
 
   if (state.onSilence) { stallTicks = 0; return; }
   if (audio.currentTime === lastPos) {
@@ -305,7 +350,8 @@ async function poll() {
       trimQueue();
       if (state.playing && state.onSilence) next();
     }
-    if (state.playing && state.netFail === 0 && !(el.status.dataset.state || "").startsWith("live")) {
+    if (state.playing && !state.externalPause && state.netFail === 0 &&
+        !(el.status.dataset.state || '').startsWith('live')) {
       setStatus('live', 'Live');
     }
   } catch (err) {
@@ -364,7 +410,13 @@ function setupMediaSession() {
   if (!('mediaSession' in navigator)) return;
   const ms = navigator.mediaSession;
   const set = (action, fn) => { try { ms.setActionHandler(action, fn); } catch (_) {} };
-  set('play', () => { if (!state.playing) start(); else audio && audio.play().catch(() => {}); });
+  // Pressing play on the lock screen is an explicit request, so it clears a
+  // focus-loss pause and takes the speaker back.
+  set('play', () => {
+    state.externalPause = false;
+    if (!state.playing) start();
+    else if (audio) audio.play().catch(() => {});
+  });
   set('pause', stop);
   set('stop', stop);
   set('nexttrack', () => { if (state.playing) next(); });
@@ -604,7 +656,7 @@ el.autoStart.addEventListener('change', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !state.playing) return;
   poll();
-  if (audio && audio.paused) audio.play().catch(() => {});
+  if (audio && audio.paused && !state.externalPause) audio.play().catch(() => {});
 });
 window.addEventListener('online', () => { if (state.playing) poll(); });
 
