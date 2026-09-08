@@ -23,7 +23,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -456,8 +456,12 @@ function emergencyStop() {
   if (keepAlive) {
     keepAlive.pause();
     keepAlive.loop = false;
+    // ensureKeepAlive generates a fresh blob each time, so without revoking this
+    // one every stop/start cycle would strand another copy of the tone in memory.
+    const toneUrl = keepAlive.getAttribute('src');
     keepAlive.removeAttribute('src');
     try { keepAlive.load(); } catch (_) {}
+    if (toneUrl && toneUrl.indexOf('blob:') === 0) URL.revokeObjectURL(toneUrl);
     keepAlive = null;
   }
 
@@ -968,7 +972,10 @@ el.recentToggle.addEventListener('click', () => {
 
 el.volume.addEventListener('input', () => {
   state.volume = Number(el.volume.value) / 100;
-  if (audio) audio.volume = state.volume;
+  // Never raise the element's volume while it is idling. Idle loops the LAST
+  // CLIP at volume 0, so unmuting it replays that transmission out loud, on
+  // repeat. playCall applies state.volume when the next call starts.
+  if (audio && !state.onSilence) audio.volume = state.volume;
   el.volLabel.textContent = el.volume.value;
   saveSettings();
 });
