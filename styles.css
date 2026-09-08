@@ -329,7 +329,14 @@ input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; background: v
 }
 .rc-replay svg { width: 15px; height: 15px; fill: currentColor; }
 
-.credit { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin: 22px 0 14px; text-align: center; }
+.credit { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin: 22px 0 8px; text-align: center; }
+/* Build tag: lets you confirm at a glance which version the phone is actually
+   running, rather than trusting that a deploy landed. */
+.build {
+  font-size: 11px; color: var(--muted); opacity: 0.65; text-align: center;
+  margin: 0 0 16px; font-variant-numeric: tabular-nums;
+}
+.build .stale { color: var(--amber); opacity: 1; font-weight: 600; }
 
 /* ---------- install bar ---------- */
 .install {

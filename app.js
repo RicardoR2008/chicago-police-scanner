@@ -14,6 +14,10 @@
  * and the lock-screen controls) alive through radio silence.
  */
 
+// Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
+// on every change, so the running build is verifiable by eye instead of assumed.
+const APP_VERSION = 'v9';
+
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
 const POLL_MS = 5000;
@@ -555,6 +559,26 @@ function applyTheme(choice) {
   renderMeta();
 }
 
+// Prints the build this page is running, and flags the case that used to be
+// invisible: the worker has a newer build cached than the JS currently executing,
+// which means the code on screen is stale.
+async function renderBuildTag() {
+  const tag = $('buildTag');
+  if (!tag) return;
+  tag.textContent = 'Build ' + APP_VERSION;
+  try {
+    const keys = await caches.keys();
+    const active = keys.find((k) => k.indexOf('cpd-scanner-') === 0);
+    if (!active) return;
+    const swVersion = active.slice('cpd-scanner-'.length);
+    if (swVersion === APP_VERSION) return;
+    const note = document.createElement('span');
+    note.className = 'stale';
+    note.textContent = '  ·  ' + swVersion + ' ready — reopen to update';
+    tag.appendChild(note);
+  } catch (_) { /* no cache access; the plain build number is still useful */ }
+}
+
 function setStatus(kind, text) {
   el.status.dataset.state = kind;
   el.statusText.textContent = text || kind;
@@ -861,6 +885,7 @@ function boot() {
   setStatus('idle', 'Idle');
   setPlayButton('paused');
   render();
+  renderBuildTag();
   loadTalkgroups();
   maybeShowIosInstallHint();
 

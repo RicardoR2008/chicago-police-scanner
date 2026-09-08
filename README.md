@@ -129,9 +129,28 @@ If you want push updates, that's the hook to use.
 | `manifest.webmanifest` | PWA manifest |
 | `tools/make-icons.js` | Regenerates the PNG icons (`node tools/make-icons.js`) |
 
-The service worker is stale-while-revalidate for the app shell only — it never touches
-the API or the audio. A consequence worth knowing: after you push a change, the update
-lands on the *next* launch, not the current one.
+The service worker is **network-first** for the app shell only — it never touches the API
+or the audio. The network is raced against a 3s timeout, so a hung mobile connection
+falls back to cache rather than stalling the launch, and the app still opens offline.
+
+This started out stale-while-revalidate for a faster launch. That was the wrong trade:
+the shell is a few KB, but cache-first left the app running old code with no way to know
+or escape it, so shipped fixes looked like they had never landed. A ~100ms wait is
+cheaper than being a version behind.
+
+### Bump the version on every change
+
+`APP_VERSION` in `app.js` and `CACHE` in `sw.js` must always move together, and both get
+bumped on *any* app edit — even one that wouldn't strictly need it. The version is
+printed at the bottom of the app, so what's running on the phone can be checked by eye
+instead of assumed. If the worker has a newer build cached than the running JS, the tag
+says so.
+
+```bash
+node tools/check-version.js
+```
+
+Run that before committing; it fails if the two drift apart.
 
 ## Running it locally
 
