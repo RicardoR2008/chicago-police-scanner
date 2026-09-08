@@ -9,14 +9,21 @@
  *      already unlocked.
  *
  * So: ONE <audio> element for the whole session, unlocked by the first tap and
- * never replaced. When no call is queued it loops near-silent audio instead of
- * stopping, which keeps the media session (and therefore the page, its timers,
- * and the lock-screen controls) alive through radio silence.
+ * never replaced, plus a SECOND element that plays a continuous keep-alive tone.
+ *
+ * The keep-alive matters more than it looks. Chrome only protects a backgrounded
+ * page while it measures the page as audibly playing, at roughly -60 dBFS. The
+ * original keep-alive was +/-1 LSB - measured at -91.4 dBFS, thirty decibels
+ * below that line - so the page was frozen a few seconds after the screen locked
+ * and playback stopped until the app was reopened. The tone is now 18 Hz at
+ * -34 dBFS: subsonic, so a phone speaker cannot reproduce it, but unambiguously
+ * not silence. It runs on its own element that never stops and never changes
+ * src, so neither going idle nor swapping clips can interrupt the protection.
  */
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v14';
+const APP_VERSION = 'v15';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -36,6 +43,7 @@ const FOCUS_GRACE_MS = 1200;        // let a notification tone finish first
 const FOCUS_FAIL_WINDOW_MS = 1500;  // re-paused this fast => the resume did not stick
 const FOCUS_MAX_STRIKES = 3;        // consecutive failures before we stop trying
 const FOCUS_RESET_MS = 10000;       // playing this long => interruption is over
+const KEEPALIVE_HZ = 18;            // subsonic: below what a phone speaker can reproduce
 const RECENT_MAX = 40;      // how much history we keep in memory
 const RECENT_VISIBLE = 6;   // how much of it we render before "Show more"
 const SEEN_MAX = 600;
@@ -126,6 +134,7 @@ let resumeTimer = null;
 
 let audio = null;
 let silenceUrl = null;
+let keepAlive = null;               // separate element, plays for the whole session
 
 // A few seconds of 16-bit PCM at +/-1 LSB (about -90 dBFS). Inaudible, but not
 // digital silence - some platforms treat an all-zero track as "not playing" and
@@ -147,6 +156,48 @@ function makeSilence(seconds) {
   for (let i = 0; i < frames; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true);
 
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
+// Chrome keeps a backgrounded page alive only while it is producing sound it
+// MEASURES as audible (roughly above -60 dBFS). The old keep-alive was +/-1 LSB,
+// about -90 dBFS, and the idle loop then ran at volume 0 - both read as silence,
+// so the page was frozen seconds after the screen locked and playback stopped
+// until the app was reopened.
+//
+// This tone is ~18 Hz at about -34 dBFS. A phone speaker cannot reproduce 18 Hz
+// at any useful level, so it is inaudible in practice, but it is far above the
+// silence threshold. It runs on its own element that never stops and never
+// changes src, so neither going idle nor swapping clips can interrupt it.
+function makeKeepAliveTone(seconds) {
+  const rate = 8000;
+  const frames = rate * seconds;
+  const bytes = 44 + frames * 2;
+  const buf = new ArrayBuffer(bytes);
+  const v = new DataView(buf);
+  const tag = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+
+  tag(0, 'RIFF'); v.setUint32(4, bytes - 8, true); tag(8, 'WAVE');
+  tag(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  tag(36, 'data'); v.setUint32(40, frames * 2, true);
+
+  const amp = 0.02;                    // about -34 dBFS
+  for (let i = 0; i < frames; i++) {
+    const sample = Math.sin(2 * Math.PI * KEEPALIVE_HZ * (i / rate)) * amp;
+    v.setInt16(44 + i * 2, Math.round(sample * 32767), true);
+  }
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
+function ensureKeepAlive() {
+  if (keepAlive) return;
+  keepAlive = new Audio();
+  keepAlive.src = makeKeepAliveTone(5);
+  keepAlive.loop = true;
+  keepAlive.preload = 'auto';
+  keepAlive.volume = 1;                // the tone itself is what keeps it quiet
 }
 
 function ensureAudio() {
@@ -322,6 +373,9 @@ function updatePositionState() {
 function start(opts) {
   const auto = !!(opts && opts.auto);
   ensureAudio();
+  ensureKeepAlive();
+  // Started inside the same gesture as the main element so it is unlocked too.
+  keepAlive.play().catch(() => {});
   state.playing = true;
   state.externalPause = false;   // an explicit start overrides a focus-loss pause
   state.resumeStrikes = 0;
@@ -358,6 +412,7 @@ function start(opts) {
 function stop() {
   state.playing = false;
   if (audio) { selfPause = true; audio.pause(); }
+  if (keepAlive) keepAlive.pause();
   state.onSilence = false;
   state.externalPause = false;
   state.resumeStrikes = 0;
@@ -393,6 +448,17 @@ function emergencyStop() {
     // Detach the source so no timer, event or handler can resume it.
     audio.removeAttribute('src');
     try { audio.load(); } catch (_) { /* already empty */ }
+  }
+
+  // The keep-alive is what holds the page awake, so an emergency stop has to
+  // take it down too - otherwise the tone keeps the app running in the
+  // background, which is the exact opposite of what this button is for.
+  if (keepAlive) {
+    keepAlive.pause();
+    keepAlive.loop = false;
+    keepAlive.removeAttribute('src');
+    try { keepAlive.load(); } catch (_) {}
+    keepAlive = null;
   }
 
   // Dropping metadata and the action handlers is what removes the Android
@@ -467,6 +533,10 @@ function stopTimers() {
 // clip that loads but never advances.
 function watchdog() {
   if (!state.playing || !audio) return;
+
+  // If the OS paused the keep-alive, the page loses its protection entirely, so
+  // this matters more than the main element.
+  if (keepAlive && keepAlive.paused) keepAlive.play().catch(() => {});
 
   // Backstop for the resume timer, which a frozen background page can lose.
   if (audio.paused) { tryResume(); return; }
