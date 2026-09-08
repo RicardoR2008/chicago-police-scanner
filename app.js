@@ -879,7 +879,16 @@ function boot() {
       location.reload();
     });
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      // updateViaCache:'none' stops the browser serving sw.js itself from the
+      // HTTP cache, which can otherwise pin a user to an old worker for hours.
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+        .then((reg) => {
+          reg.update();
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update();
+          });
+        })
+        .catch(() => {});
     });
   }
 

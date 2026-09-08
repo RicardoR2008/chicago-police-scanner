@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so the PWA installs and launches offline.
    Never touches the OpenMHz API or audio - those must always hit the network. */
-const CACHE = 'cpd-scanner-v7';
+const CACHE = 'cpd-scanner-v8';
 const SHELL = [
   './',
   './index.html',
@@ -34,17 +34,27 @@ self.addEventListener('fetch', (e) => {
   // Let anything cross-origin (API calls, audio clips) go straight to the network.
   if (new URL(req.url).origin !== self.location.origin) return;
 
-  // Stale-while-revalidate for the shell: instant launch, updates land next open.
-  e.respondWith(
-    caches.open(CACHE).then(async (cache) => {
+  // Network-first for the shell, cache only as the offline fallback.
+  //
+  // This was stale-while-revalidate, chosen for instant launch. That was the
+  // wrong trade: the shell is a few KB, but it left users running old code with
+  // no way to know or escape it - a shipped fix looked like it had never landed.
+  // A ~100ms wait beats being a version behind.
+  //
+  // The network is raced against a timeout so a hung mobile connection falls
+  // back to cache instead of stalling the launch indefinitely.
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      const fresh = await Promise.race([
+        fetch(req),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('slow')), 3000)),
+      ]);
+      if (fresh && fresh.ok) cache.put(req, fresh.clone());
+      return fresh;
+    } catch (_) {
       const cached = await cache.match(req, { ignoreSearch: true });
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok) cache.put(req, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
-  );
+      return cached || Response.error();
+    }
+  })());
 });
