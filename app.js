@@ -16,7 +16,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -572,9 +572,11 @@ async function renderBuildTag() {
     if (!active) return;
     const swVersion = active.slice('cpd-scanner-'.length);
     if (swVersion === APP_VERSION) return;
-    const note = document.createElement('span');
+    // Make the fix one tap away instead of a settings expedition.
+    const note = document.createElement('a');
     note.className = 'stale';
-    note.textContent = '  ·  ' + swVersion + ' ready — reopen to update';
+    note.href = 'reset.html';
+    note.textContent = '  ·  ' + swVersion + ' ready — tap to update';
     tag.appendChild(note);
   } catch (_) { /* no cache access; the plain build number is still useful */ }
 }

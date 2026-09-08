@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reset Chicago Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<!--
+  Escape hatch for a stuck service worker.
+
+  Deliberately self-contained: no styles.css, no app.js, no icons. Any external
+  file would be served by the very worker this page exists to remove, which is
+  how you end up with a repair tool that is itself broken.
+
+  An old worker has never cached this path, so its cache lookup misses and the
+  request falls through to the network - which is what makes this work even
+  when every other page is stale.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #0a0f1e; color: #e9eff9; text-align: center;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    padding: 24px;
+  }
+  .box { max-width: 380px; }
+  h1 { font-size: 19px; margin: 0 0 10px; }
+  p { color: #8e9dc2; margin: 0 0 18px; font-size: 14px; }
+  #log {
+    font-size: 13px; color: #41b6e6; min-height: 3em;
+    font-variant-numeric: tabular-nums; white-space: pre-line;
+  }
+  a.btn {
+    display: inline-block; margin-top: 14px; padding: 12px 20px;
+    background: #41b6e6; color: #06101f; border-radius: 999px;
+    font-weight: 650; text-decoration: none;
+  }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>Resetting the scanner</h1>
+  <p>Clearing the old cached version. This takes a second.</p>
+  <div id="log">Starting…</div>
+  <a class="btn" id="manual" href="./" hidden>Open the scanner</a>
+</div>
+
+<script>
+(async function () {
+  var log = document.getElementById('log');
+  var lines = [];
+  function say(msg) { lines.push(msg); log.textContent = lines.join('\n'); }
+
+  try {
+    if ('serviceWorker' in navigator) {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for (var i = 0; i < regs.length; i++) await regs[i].unregister();
+      say('Removed ' + regs.length + ' service worker' + (regs.length === 1 ? '' : 's'));
+    }
+  } catch (e) { say('Could not remove workers'); }
+
+  try {
+    if (window.caches) {
+      var keys = await caches.keys();
+      for (var j = 0; j < keys.length; j++) await caches.delete(keys[j]);
+      say(keys.length ? 'Deleted cache: ' + keys.join(', ') : 'No caches found');
+    }
+  } catch (e) { say('Could not clear caches'); }
+
+  say('Loading the current version…');
+
+  // Cache-bust the navigation too, so no HTTP-cached copy sneaks back in.
+  setTimeout(function () {
+    location.replace('./?fresh=' + Date.now());
+  }, 900);
+
+  // If the redirect is blocked for any reason, leave a manual way out.
+  setTimeout(function () {
+    document.getElementById('manual').hidden = false;
+  }, 4000);
+})();
+</script>
+</body>
+</html>

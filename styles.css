@@ -336,7 +336,10 @@ input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; background: v
   font-size: 11px; color: var(--muted); opacity: 0.65; text-align: center;
   margin: 0 0 16px; font-variant-numeric: tabular-nums;
 }
-.build .stale { color: var(--amber); opacity: 1; font-weight: 600; }
+.build .stale {
+  color: var(--amber); opacity: 1; font-weight: 600;
+  text-decoration: underline; text-underline-offset: 3px;
+}
 
 /* ---------- install bar ---------- */
 .install {

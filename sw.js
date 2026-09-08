@@ -1,6 +1,6 @@
 /* Service worker: caches the app shell so the PWA installs and launches offline.
    Never touches the OpenMHz API or audio - those must always hit the network. */
-const CACHE = 'cpd-scanner-v9';
+const CACHE = 'cpd-scanner-v10';
 const SHELL = [
   './',
   './index.html',
@@ -31,8 +31,14 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
 
+  const url = new URL(req.url);
+
   // Let anything cross-origin (API calls, audio clips) go straight to the network.
-  if (new URL(req.url).origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return;
+
+  // The reset page exists to break out of a bad cache, so it must never be
+  // served from one. Always straight to the network.
+  if (url.pathname.endsWith('/reset.html')) return;
 
   // Network-first for the shell, cache only as the offline fallback.
   //
