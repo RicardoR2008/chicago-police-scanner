@@ -16,7 +16,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v12';
+const APP_VERSION = 'v13';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -372,8 +372,17 @@ let lastPollAt = 0, pendingPoll = null;
 // Every refill goes through here. If a poll happened too recently the request is
 // coalesced into a single deferred one rather than dropped, so an 'ended' event
 // during a throttled window still refills the queue - just a moment later.
+// Repeated failures usually mean Cloudflare is challenging us, and polling at the
+// normal rate through a challenge just prolongs it. Back off exponentially and
+// let it clear; a single success resets netFail and restores the normal cadence.
+function pollBackoffMs() {
+  if (state.netFail < 2) return 0;
+  return Math.min(60000, POLL_MIN_GAP_MS * Math.pow(2, Math.min(state.netFail - 1, 6)));
+}
+
 function requestPoll() {
-  const wait = POLL_MIN_GAP_MS - (Date.now() - lastPollAt);
+  const gap = Math.max(POLL_MIN_GAP_MS, pollBackoffMs());
+  const wait = gap - (Date.now() - lastPollAt);
   if (wait <= 0) { poll(); return; }
   if (pendingPoll) return;
   pendingPoll = setTimeout(() => { pendingPoll = null; poll(); }, wait);
