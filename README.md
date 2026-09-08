@@ -152,6 +152,26 @@ node tools/check-version.js
 
 Run that before committing; it fails if the two drift apart.
 
+### If the app gets stuck on an old build
+
+Open **`/reset.html`**. It unregisters every service worker, deletes every cache, and
+reloads the current build.
+
+This exists because "just reopen the app" does not work when the worker itself is the
+problem — a cache-first worker serves its own copy of every cached path, so every route
+into the app is already poisoned, including whatever code was meant to fix it.
+`reset.html` escapes that because an old worker has never cached *that* path: the lookup
+misses and the request falls through to the network.
+
+Two rules keep it working, and both matter:
+
+- It is entirely self-contained — no `styles.css`, no `app.js`, no icons. Any external
+  file would be served by the very worker it exists to remove.
+- The service worker skips it explicitly, so the repair tool can never itself go stale.
+
+The build tag links here automatically when the worker holds a newer build than the
+running JavaScript.
+
 ## Running it locally
 
 ```bash
