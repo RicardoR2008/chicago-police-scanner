@@ -16,7 +16,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v11';
+const APP_VERSION = 'v12';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -27,6 +27,15 @@ const POLL_MS = 5000;
 const POLL_MIN_GAP_MS = 3000;
 const START_LOOKBACK_MS = 20000;   // begin near-live rather than replaying history
 const STALE_RESUME_MS = 60000;     // past this, a resume rejoins live instead of catching up
+
+// Audio-focus recovery. Android pauses our element both for a passing chime and
+// for another app taking the speaker for good, and gives us no way to tell which.
+// So we judge by outcome: try to resume, and if the resume is immediately paused
+// again, that is a real focus holder and we back off.
+const FOCUS_GRACE_MS = 1200;        // let a notification tone finish first
+const FOCUS_FAIL_WINDOW_MS = 1500;  // re-paused this fast => the resume did not stick
+const FOCUS_MAX_STRIKES = 3;        // consecutive failures before we stop trying
+const FOCUS_RESET_MS = 10000;       // playing this long => interruption is over
 const RECENT_MAX = 40;      // how much history we keep in memory
 const RECENT_VISIBLE = 6;   // how much of it we render before "Show more"
 const SEEN_MAX = 600;
@@ -99,6 +108,7 @@ const state = {
   netFail: 0,
   onSilence: false,
   externalPause: false,
+  resumeStrikes: 0,
   recentExpanded: false,
   theme: 'system',
 };
@@ -106,6 +116,11 @@ const state = {
 // Set immediately before we call audio.pause() ourselves, so the 'pause' handler
 // can tell our own pause apart from Android taking audio focus away.
 let selfPause = false;
+
+// When we last asked the element to resume, and the pending retry. Used to tell a
+// resume that stuck from one that was slapped down by another app.
+let lastResumeAt = 0;
+let resumeTimer = null;
 
 /* ------------------------------------------------------------------ audio */
 
@@ -150,8 +165,15 @@ function ensureAudio() {
 
 function playSilence() {
   if (!audio) return Promise.resolve();
+
+  // Re-assigning src fires 'emptied', which can tear the media session down and
+  // take the notification with it. If the keep-alive is already running, leave
+  // the element alone.
+  const alreadyRunning = state.onSilence && audio.src === silenceUrl && !audio.paused;
   state.onSilence = true;
   state.current = null;
+  if (alreadyRunning) { setMediaIdle(); return Promise.resolve(); }
+
   audio.loop = true;
   audio.src = silenceUrl;
   setMediaIdle();
@@ -191,14 +213,46 @@ function next() {
 function onPause() {
   if (selfPause) { selfPause = false; return; }
   if (!state.playing) return;
+
+  // Getting paused again right after we resumed means something else genuinely
+  // holds the speaker. A pause long after a resume is a fresh interruption.
+  if (lastResumeAt && Date.now() - lastResumeAt < FOCUS_FAIL_WINDOW_MS) {
+    state.resumeStrikes++;
+  }
+
   state.externalPause = true;
   setPlayButton('paused');
-  setStatus('wait', 'Paused by phone');
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+
+  if (state.resumeStrikes >= FOCUS_MAX_STRIKES) {
+    // Another app owns the speaker. Stop competing; the lock screen and the app
+    // can still start us again on purpose.
+    setStatus('wait', 'Paused by phone');
+    render();
+    return;
+  }
+
+  setStatus('wait', 'Interrupted');
+  render();
+  clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(tryResume, FOCUS_GRACE_MS);
+}
+
+// Single place that decides whether resuming is allowed, so the watchdog and the
+// post-interruption timer cannot disagree.
+function tryResume() {
+  if (!state.playing || !audio || !audio.paused) return;
+  if (state.externalPause && state.resumeStrikes >= FOCUS_MAX_STRIKES) return;
+  lastResumeAt = Date.now();
+  audio.play().catch(() => { state.resumeStrikes++; });
 }
 
 function onPlaying() {
   state.externalPause = false;
+  // Without this the session stays marked 'paused' after any interruption, even
+  // though sound is coming out - and Android dismisses a paused media
+  // notification, which looks exactly like the app closed itself.
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   setPlayButton('playing');
   setStatus('live', 'Live');
   // The unlock is now confirmed on this element, so it is safe to swap in a real
@@ -251,6 +305,7 @@ function start(opts) {
   ensureAudio();
   state.playing = true;
   state.externalPause = false;   // an explicit start overrides a focus-loss pause
+  state.resumeStrikes = 0;
   // Pressing play after a long pause should rejoin live traffic. Without this
   // the cursor is still minutes old, so the next poll returns a huge backlog and
   // you hear stale calls before catching up.
@@ -286,6 +341,8 @@ function stop() {
   if (audio) { selfPause = true; audio.pause(); }
   state.onSilence = false;
   state.externalPause = false;
+  state.resumeStrikes = 0;
+  clearTimeout(resumeTimer); resumeTimer = null;
   stopTimers();
   setPlayButton('paused');
   setStatus('idle', 'Paused');
@@ -339,11 +396,11 @@ function stopTimers() {
 function watchdog() {
   if (!state.playing || !audio) return;
 
-  // Don't resume while something else legitimately holds audio focus.
-  if (audio.paused) {
-    if (!state.externalPause) audio.play().catch(() => {});
-    return;
-  }
+  // Backstop for the resume timer, which a frozen background page can lose.
+  if (audio.paused) { tryResume(); return; }
+
+  // Playing steadily for a while means the interruption is genuinely over.
+  if (lastResumeAt && Date.now() - lastResumeAt > FOCUS_RESET_MS) state.resumeStrikes = 0;
 
   if (state.onSilence) { stallTicks = 0; return; }
   if (audio.currentTime === lastPos) {
@@ -825,7 +882,10 @@ el.autoStart.addEventListener('change', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !state.playing) return;
   requestPoll();
-  if (audio && audio.paused && !state.externalPause) audio.play().catch(() => {});
+  // Bringing the app to the front is an explicit signal you want it playing, so
+  // give it a clean slate even if we had backed off.
+  state.resumeStrikes = 0;
+  tryResume();
 });
 window.addEventListener('online', () => { if (state.playing) requestPoll(); });
 
