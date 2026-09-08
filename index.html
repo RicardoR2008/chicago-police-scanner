@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chicago Police Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="description" content="Live Chicago Police radio. Keeps playing with your screen off.">
+<meta name="theme-color" content="#0a0f1e">
+<meta name="color-scheme" content="dark">
+
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CPD Scanner">
+
+<link rel="preconnect" href="https://api.openmhz.com" crossorigin>
+<link rel="preconnect" href="https://media2.openmhz.com">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.5 9.5a7 7 0 0 1 11 0M9 12a4 4 0 0 1 6 0" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"/>
+      <circle cx="12" cy="14.5" r="2.2" fill="#d42730"/>
+      <path d="M12 16.5V20M8.5 21h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div class="brand-text">
+      <h1>Chicago Scanner</h1>
+      <p>Chicago Police &middot; live</p>
+    </div>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite">
+    <span class="dot" id="statusDot"></span><span id="statusText">Idle</span>
+  </div>
+</header>
+
+<main>
+  <!-- Now playing -->
+  <section class="now" aria-label="Now playing">
+    <p class="now-label" id="nowLabel">Ready</p>
+    <h2 class="now-tg" id="nowTg">Chicago Police Scanner</h2>
+    <p class="now-desc" id="nowDesc">Tap play to start listening. Audio keeps going with your screen off.</p>
+    <div class="progress" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="now-meta">
+      <span id="nowTime">&nbsp;</span>
+      <span id="queueInfo">&nbsp;</span>
+    </div>
+  </section>
+
+  <!-- Controls -->
+  <section class="controls" aria-label="Playback controls">
+    <button id="playBtn" class="play-btn" aria-label="Play scanner">
+      <svg class="ico-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+      <svg class="ico-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5h3.2v14H7.5zm5.8 0h3.2v14h-3.2z"/></svg>
+      <svg class="ico-spin" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.4"
+                stroke-linecap="round" stroke-dasharray="34 18"/>
+      </svg>
+    </button>
+    <button id="skipBtn" class="ghost-btn" aria-label="Skip to next call">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5.5v13l9-6.5zM16.5 5h2.5v14h-2.5z"/></svg>
+      <span>Skip</span>
+    </button>
+  </section>
+
+  <!-- Volume -->
+  <section class="vol-row" aria-label="Volume">
+    <svg class="vol-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4z"/></svg>
+    <input id="volume" type="range" min="0" max="100" value="100" aria-label="Volume">
+    <span id="volLabel" class="vol-label">100</span>
+  </section>
+
+  <!-- Talkgroups -->
+  <section class="panel" aria-label="Talkgroup filter">
+    <button class="panel-head" id="tgToggle" aria-expanded="false" aria-controls="tgBody">
+      <span class="panel-title">Channels</span>
+      <span class="panel-sub" id="tgSummary">All 20</span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <div class="panel-body" id="tgBody" hidden>
+      <div class="quick">
+        <button class="mini" data-preset="all">All</button>
+        <button class="mini" data-preset="none">None</button>
+        <button class="mini" data-preset="zones">Dispatch zones</button>
+        <button class="mini" data-preset="citywide">Citywide</button>
+      </div>
+      <div class="chips" id="tgChips"></div>
+    </div>
+  </section>
+
+  <!-- Options -->
+  <section class="panel" aria-label="Options">
+    <button class="panel-head" id="optToggle" aria-expanded="false" aria-controls="optBody">
+      <span class="panel-title">Options</span>
+      <span class="panel-sub" id="optSummary">Live mode</span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <div class="panel-body" id="optBody" hidden>
+      <label class="opt">
+        <span><strong>Start playing when I open the app</strong><small>Begin scanning immediately, no tap needed</small></span>
+        <input type="checkbox" id="autoStart" checked>
+      </label>
+      <label class="opt">
+        <span><strong>Live mode</strong><small>Skip backlog and stay close to real time</small></span>
+        <input type="checkbox" id="liveMode" checked>
+      </label>
+      <label class="opt">
+        <span><strong>Skip very short calls</strong><small>Ignore clips under 2 seconds (mostly clicks)</small></span>
+        <input type="checkbox" id="skipShort">
+      </label>
+    </div>
+  </section>
+
+  <!-- Recent -->
+  <section class="recent" aria-label="Recent calls">
+    <h2 class="recent-head">Recent calls</h2>
+    <ul id="recentList" class="recent-list"><li class="empty">Nothing yet &mdash; press play.</li></ul>
+  </section>
+
+  <p class="credit">Audio from <a href="https://openmhz.com/system/chi_cpd" target="_blank" rel="noopener">OpenMHz</a>.
+  Radio traffic is delayed and may be incomplete. Never use this to interfere with an emergency response.</p>
+</main>
+
+<!-- Install hint -->
+<div class="install" id="installBar" hidden>
+  <span id="installText">Add to your home screen for background audio.</span>
+  <button id="installBtn" class="mini solid">Install</button>
+  <button id="installClose" class="mini" aria-label="Dismiss">&times;</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+# Chicago Police Scanner
+
+A small, installable web app that plays live Chicago Police radio traffic from
+[OpenMHz](https://openmhz.com/system/chi_cpd) — and **keeps playing while your phone is
+locked and you're in other apps**.
+
+No build step, no dependencies, no server of your own. It's four static files plus icons,
+so GitHub Pages can host it for free.
+
+![Chicago Police Scanner](icons/icon-192.png)
+
+## What it does
+
+- Streams every call from the `chi_cpd` system, newest first, back to back
+- **Starts playing the moment you open it** — no dialog, no setup
+- Keeps going with the screen off, with lock-screen play/pause/skip controls
+- Filter by channel: 13 dispatch zones (by district) and 7 citywide channels
+- **Live mode** skips the backlog so you stay close to real time
+- Recent-call list with one-tap replay
+- Remembers your channels and settings
+
+## Install it on your phone
+
+Background audio is much more reliable once the app is installed to your home screen,
+because it runs as its own app instead of a browser tab.
+
+**iPhone / iPad (Safari)**
+1. Open the site in **Safari** (this doesn't work from Chrome on iOS)
+2. Tap the **Share** button, then **Add to Home Screen**
+3. Open it from the home-screen icon
+4. Tap play once — iOS requires one tap before any audio can start
+
+**Android (Chrome)**
+1. Open the site in Chrome
+2. Tap **Install** on the banner, or menu → **Install app**
+3. Open it from the app icon
+
+## Playing with the screen off
+
+Once it's playing, lock your phone or switch apps and audio continues. Your lock screen
+gets standard media controls (play, pause, skip to next call).
+
+Two honest caveats:
+
+- **iOS needs one tap to start.** Safari blocks audio until you interact with the page, so
+  "start playing when I open the app" can't fire on a cold launch on iPhone. You tap play
+  once, and from then on it runs unattended. On Android it usually autostarts outright.
+- **Don't force-quit the app.** Swiping it away from the app switcher stops the audio, the
+  same as it would for a podcast player.
+
+If audio ever stops, opening the app resumes it — there's a watchdog that restarts
+playback and re-syncs whenever the app becomes visible again.
+
+## How it works
+
+Two constraints shaped the whole design, and both are worth knowing before changing
+anything:
+
+**1. The audio files have no CORS headers.** Clips are served from `media2.openmhz.com` as
+`application/octet-stream` with no `Access-Control-Allow-Origin`. That makes `fetch()` +
+Web Audio decoding impossible from another origin. Everything has to go through a plain
+`<audio>` element, which isn't subject to CORS. (The JSON API *is* wide open —
+`Access-Control-Allow-Origin: *` — so no proxy is needed for call metadata.)
+
+**2. Background audio only survives while sound is actually playing.** Mobile browsers
+keep a backgrounded page alive — timers and all — only while a media element is producing
+audio. And iOS only lets you call `play()` programmatically on an element a user gesture
+already unlocked.
+
+So the app uses **one `<audio>` element for the entire session**, unlocked by the first
+tap and never replaced. When the queue runs dry it loops a few seconds of near-silent
+audio (16-bit PCM at ±1 LSB, about −90 dBFS) rather than stopping. That keeps the media
+session — and therefore the page, its timers, and your lock-screen controls — alive
+through radio silence. Digital-zero silence is deliberately avoided; some platforms treat
+an all-zero track as "not playing" and tear the session down.
+
+New calls are pulled from `GET /chi_cpd/calls/newer?time=<epoch_ms>` every 5 seconds,
+**and** on every `ended` event. That second trigger is the important one: background
+timers get throttled, but media events keep firing, so playback itself drives the refill.
+
+### Why not the websocket?
+
+OpenMHz's backend ([openmhz/trunk-server](https://github.com/openmhz/trunk-server))
+does expose a socket.io feed that emits a `new message` event per call. This app polls
+instead, on purpose:
+
+- Polling needs no client library; socket.io would be the app's only dependency
+- A websocket gets suspended in the background just like a timer, whereas the
+  `ended`-driven refill is tied to playback — which is precisely what keeps the page alive
+- Scanner audio is already delayed by seconds; sub-second push latency buys nothing
+
+If you want push updates, that's the hook to use.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `index.html` | Markup and PWA meta tags |
+| `app.js` | Playback engine, polling, media session, UI |
+| `styles.css` | Dark, mobile-first styling |
+| `sw.js` | Service worker — caches the shell so it installs and launches offline |
+| `manifest.webmanifest` | PWA manifest |
+| `tools/make-icons.js` | Regenerates the PNG icons (`node tools/make-icons.js`) |
+
+The service worker is stale-while-revalidate for the app shell only — it never touches
+the API or the audio. A consequence worth knowing: after you push a change, the update
+lands on the *next* launch, not the current one.
+
+## Running it locally
+
+```bash
+python -m http.server 5173
+```
+
+Then open `http://localhost:5173`. Any static server works; it's plain files.
+
+## Deploying to GitHub Pages
+
+Push to a repo, then **Settings → Pages → Source: Deploy from a branch**, branch
+`main`, folder `/ (root)`. The site appears at `https://<user>.github.io/<repo>/`.
+
+Every path in the app is relative, so it works from a subpath without changes.
+`.nojekyll` is included so GitHub serves the files as-is.
+
+HTTPS is required for the service worker and for install — GitHub Pages provides it.
+
+## Notes
+
+Audio comes from OpenMHz, which is community-run and free. Be a good citizen: the polling
+interval is deliberately modest, so please don't crank it down.
+
+Radio traffic is delayed and may be incomplete or unavailable if the feed goes down or
+channels are encrypted. This is for listening only — never use it to interfere with an
+emergency response.
