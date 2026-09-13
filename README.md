@@ -161,9 +161,16 @@ override it in standalone mode. That's why an installed app showed a black statu
 above the light Day theme.
 
 `theme_color` is a single static value with no media-query equivalent, so it cannot
-follow the in-app theme. It is set to the Day colour (`#dbe4f2`), which means Night mode
-may show a light status bar on an installed app where the meta override is ignored. That
-is a deliberate trade, not an oversight.
+follow the in-app theme. One value has to serve both modes.
+
+It is pinned to the **dark** colour (`#0a0f1e`). It was briefly the light colour, which
+put a bright white band above the dark app in Night mode — the mode where a mismatch is
+glaring. Dark is the better single choice because Android picks status-bar icon colour
+from the bar's luminance, so white-on-dark stays readable in Day mode too; the cost is
+only that Day mode shows a dark bar rather than a matching light one.
+
+`tools/check-theme-colors.js` pins this, so it cannot be quietly reverted by someone who
+sees the Day-mode mismatch without knowing why.
 
 Changing it requires **uninstalling and reinstalling** the app — Chrome re-reads the
 manifest on its own schedule, so a plain reload will not pick it up.

@@ -29,9 +29,18 @@ if (inlineLight && appLight && inlineLight.toLowerCase() !== appLight.toLowerCas
   fail.push(`light drift: index.html=${inlineLight} app.js=${appLight}`);
 if (tagColor && inlineLight && tagColor[1].toLowerCase() !== inlineLight.toLowerCase())
   fail.push(`tag default ${tagColor[1]} does not match the light colour ${inlineLight}`);
-if (manifest.theme_color && inlineLight &&
-    manifest.theme_color.toLowerCase() !== inlineLight.toLowerCase())
-  fail.push(`manifest theme_color=${manifest.theme_color} does not match light ${inlineLight}`);
+// An installed Android PWA takes its status bar from the manifest, not from the
+// runtime meta tag, and theme_color is a single static value with no media-query
+// equivalent - so it cannot track the in-app Day/Night toggle. It is pinned to
+// the DARK colour deliberately: that is the mode where a mismatch is glaring (a
+// white band above a dark app), and white-on-dark stays readable in Day mode.
+// Pinned here so the choice cannot be silently reverted.
+if (manifest.theme_color && inlineDark &&
+    manifest.theme_color.toLowerCase() !== inlineDark.toLowerCase())
+  fail.push(`manifest theme_color=${manifest.theme_color} must be the dark value ${inlineDark} (installed PWA uses this, not the meta tag)`);
+if (manifest.background_color && inlineDark &&
+    manifest.background_color.toLowerCase() !== inlineDark.toLowerCase())
+  fail.push(`manifest background_color=${manifest.background_color} should match the dark splash ${inlineDark}`);
 
 if (fail.length) { console.error('FAIL: theme colour inconsistency'); fail.forEach(f => console.error('  ' + f)); process.exit(1); }
 console.log(`OK: theme colours agree (dark ${appDark}, light ${appLight}), exactly 1 theme-color tag`);

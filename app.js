@@ -23,7 +23,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v17';
+const APP_VERSION = 'v18';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
