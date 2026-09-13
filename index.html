@@ -5,28 +5,34 @@
 <title>Chicago Police Scanner</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Live Chicago Police radio. Keeps playing with your screen off.">
-<!-- A media-scoped pair, so System mode gets the right status bar straight from
-     the browser with no dark flash before JS runs. An explicit Day/Night choice
-     overrides by setting BOTH to the same value, which avoids depending on
-     meta ordering. The Day value is deliberately a shade darker than the page
-     background: matching it exactly merged the status bar into the app and made
-     the notification icons disappear. -->
-<meta name="theme-color" content="#dbe4f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0a0f1e" media="(prefers-color-scheme: dark)">
+<!-- EXACTLY ONE theme-color tag, always resolved by script.
+     It previously used a media-scoped pair (light/dark), which works for an
+     OS-driven theme but competes with a manual Day/Night choice: whenever only
+     one of the two got written, the OS media query silently won and the status
+     bar contradicted the app. A single tag makes the user's choice the only
+     input, so that conflict cannot occur.
+     The Day value is deliberately a shade darker than the page background -
+     matching it exactly merged the bar into the app and made the notification
+     icons disappear. -->
+<meta name="theme-color" content="#dbe4f2">
 <meta name="color-scheme" content="light dark">
 
-<!-- Apply the saved theme before first paint, otherwise Day mode flashes the
-     dark palette on every launch. Kept inline and tiny on purpose. -->
+<!-- Resolve the theme BEFORE first paint, so the status bar is never briefly
+     wrong. Handles all three modes, including System, which the previous version
+     left to the media attribute. Kept inline and tiny on purpose. -->
 <script>
-  try {
-    var t = localStorage.getItem('cpd.theme');
-    if (t === 'light' || t === 'dark') {
-      document.documentElement.setAttribute('data-theme', t);
-      var c = t === 'dark' ? '#0a0f1e' : '#dbe4f2';
-      var ms = document.querySelectorAll('meta[name="theme-color"]');
-      for (var i = 0; i < ms.length; i++) ms[i].setAttribute('content', c);
-    }
-  } catch (e) { /* storage blocked; System mode is a fine fallback */ }
+  (function () {
+    var DARK = '#0a0f1e', LIGHT = '#dbe4f2';
+    try {
+      var t = localStorage.getItem('cpd.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      // A manual choice wins; only System consults the OS.
+      var isDark = t === 'dark' || (t !== 'light' && window.matchMedia &&
+                                    window.matchMedia('(prefers-color-scheme: dark)').matches);
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', isDark ? DARK : LIGHT);
+    } catch (e) { /* storage blocked; System mode is a fine fallback */ }
+  })();
 </script>
 
 <link rel="manifest" href="manifest.webmanifest">

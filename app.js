@@ -23,7 +23,7 @@
 
 // Shown at the bottom of the app. MUST match CACHE in sw.js - bump both together
 // on every change, so the running build is verifiable by eye instead of assumed.
-const APP_VERSION = 'v16';
+const APP_VERSION = 'v17';
 
 const SYSTEM = 'chi_cpd';
 const API = 'https://api.openmhz.com';
@@ -732,17 +732,13 @@ const THEME_BG = { dark: '#0a0f1e', light: '#dbe4f2' };
 const themeMetas = document.querySelectorAll('meta[name="theme-color"]');
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
-// System leaves the media-scoped pair intact so the browser tracks the OS on its
-// own; an explicit choice pins both entries to the same colour, which works
-// regardless of which media query happens to match.
+// One tag, one resolved colour. A manual Day/Night choice wins outright; only
+// System consults the OS, and the darkQuery listener below re-runs this when the
+// OS flips, so System still tracks it live.
 function setThemeColor(choice) {
-  for (const m of themeMetas) {
-    const isDarkSlot = (m.getAttribute('media') || '').includes('dark');
-    const value = choice === 'system'
-      ? (isDarkSlot ? THEME_BG.dark : THEME_BG.light)
-      : (choice === 'dark' ? THEME_BG.dark : THEME_BG.light);
-    m.setAttribute('content', value);
-  }
+  const dark = choice === 'dark' || (choice !== 'light' && darkQuery.matches);
+  const value = dark ? THEME_BG.dark : THEME_BG.light;
+  for (const m of themeMetas) m.setAttribute('content', value);
 }
 
 function applyTheme(choice) {

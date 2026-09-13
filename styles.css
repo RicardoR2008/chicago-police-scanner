@@ -87,7 +87,10 @@
    toggled via the hidden attribute needs this to actually hide. */
 [hidden] { display: none !important; }
 
-html { -webkit-text-size-adjust: 100%; }
+/* The theme background is set on html as well as body. With viewport-fit=cover
+   the page extends under the system UI, and relying on background propagation
+   alone can leave that strip the wrong colour. */
+html { -webkit-text-size-adjust: 100%; background: var(--bg); }
 
 body {
   margin: 0;
